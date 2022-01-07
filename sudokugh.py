@@ -1,10 +1,8 @@
 import numpy as np
-import pandas as pd
-from collections import Counter
-from itertools import chain
-
 import logging
+import sys
 
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
 RC_MASK = np.repeat(True, 9)
 POSSIBLES = set(range(1, 10))
@@ -48,7 +46,7 @@ class Cell:
         
     @property
     def fixed(self):
-        return len(self) == 1
+        return len(self) <= 1
     
     @property
     def val(self):
@@ -156,8 +154,8 @@ class Grid:
     
     def nearest_complete(self):
         all_unfixed = list(self.iunfixed())
-        all_unfixed.sort(key=lambda cell: (len(cell), 
-                         sum(self.count_fixed(collection) for collection in (cell.row, cell.col, cell.box))))
+        all_unfixed.sort(key=lambda cell: (len(cell.possibles), # smallest number of candidates
+                         (8 * 3) - sum(self.count_fixed(collection) for collection in (cell.row, cell.col, cell.box))))  # largest amount of additional info!
         return all_unfixed
             
     def gen_targets(self):
@@ -171,6 +169,9 @@ class Grid:
                 
                 if self.count_fixed() != count:  # New fixed cells, need to start again!
                     break
+            else:
+                raise RuntimeError("Hit roadblock, all cells presented")  # got to the end and made no progress
+            
     
     def display(self):
         array = self.as_array()
@@ -204,30 +205,29 @@ class Grid:
                 return True
         return False
                 
-    def solve(self, max_iter=500):
+    def solve(self):
         logging.info("Performing initial reduction")
         i = 0
         self.update_possibles()
         logging.info("Eliminating possibilities")
-        for i, target in zip(range(500), self.gen_targets()):
-            logging.info("Trying to deduce", target)
+        
+        for i, target in enumerate(self.gen_targets()):
+            logging.info(f"Trying to deduce {target}")
             if self.try_elimination(target):
-                logging.info("Success!", target.val)
+                logging.info(f"Success! {target.val}")
                 logging.info("Updating consequences")
                 self.update_possibles()
             else:
                 logging.info("No luck!")
-        else:
-            if i + 1 == max_iter:
-                raise RuntimeError("Couldn't solve after", max_iter, "iterations")
         
         logging.info("Solved")
         return i + 1
 
-    def deepsolve(self, branch_trigger=81 * 3, pmin=(1/9) ** 3, _p=1.0):
+    def deepsolve(self, pmin=1/9 ** 3, _p=1.0):
         try:
-            self.solve(branch_trigger)
-            return self
+            i = self.solve()
+            logging.info("Deep solved")
+            return i
         
         except RuntimeError:
             logging.info("Got stuck, attempting to branch")
@@ -235,8 +235,10 @@ class Grid:
             nearest_complete = self.nearest_complete()
             
             for iba, candidate in enumerate(nearest_complete):
+            
+                _p = (1 / len(candidate.possibles) * _p)
                 
-                if (1 / len(candidate.possibles) * _p) < pmin:
+                if _p < pmin:
                     raise RuntimeError("Chance of success judged too low")
                 
                 for possible in candidate.possibles:
@@ -244,13 +246,19 @@ class Grid:
                     branch_grid[candidate.irow, candidate.icol].fix(possible)
                     
                     try:
-                        logging.info("Entering a branch for", candidate, "using", possible)
-                        complete = branch_grid.deepsolve(branch_trigger=branch_trigger, pmin=pmin, _p=_p)
+                        logging.info(f"Entering a branch for {candidate} using {possible}")
+                        complete = branch_grid.deepsolve(pmin=pmin, _p=_p)
                         self.from_array(complete.as_array())
-                        logging.info("Solved!")
                         return complete
                     except Exception as e:
-                        logging.info("Deadend reached due to", e)
+                        logging.info(f"Deadend reached due to {e}")
                         del branch_grid
                         
-        
+
+if __name__ == '__main__':
+    from tests import T1, T2, T3, T4
+    g1 = Grid.from_array(T1)
+    g2 = Grid.from_array(T2)
+    g3 = Grid.from_array(T3)
+    g4 = Grid.from_array(T4)
+    
